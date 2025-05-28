@@ -7,6 +7,11 @@ from pymongo import DESCENDING
 from sms import enviar_sms
 import bcrypt
 from fastapi import Body
+import asyncio
+from fastapi.responses import StreamingResponse
+import json
+
+eventos_sse = asyncio.Queue()
 
 app = FastAPI()
 
@@ -104,6 +109,10 @@ def registrar_evento(data: Evento):
     data.placa = normalizar_placa(data.placa)
     coleccion_eventos.insert_one(data.dict())
 
+    # Notificar disponibilidad actualizada
+    disponibilidad_actual = calcular_disponibilidad()
+    asyncio.create_task(eventos_sse.put(disponibilidad_actual))
+    
     usuario = coleccion_usuarios.find_one({
         "vehiculos.placa": data.placa
     })
@@ -136,10 +145,26 @@ def obtener_historial(placa: str):
 # -------------------------------
 @app.get("/disponibilidad")
 def disponibilidad():
+    return calcular_disponibilidad()
+
+from fastapi import Request
+
+@app.get("/sse/disponibilidad")
+async def sse_disponibilidad(request: Request):
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                break
+
+            data = await eventos_sse.get()
+            yield f"data: {json.dumps(data)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+def calcular_disponibilidad():
     placas_carros_raw = coleccion_eventos.distinct("placa", {"tipo_vehiculo": "carro"})
     placas_motos_raw = coleccion_eventos.distinct("placa", {"tipo_vehiculo": "moto"})
 
-    # Normalizar placas para evitar duplicados
     placas_carros = set([normalizar_placa(p) for p in placas_carros_raw])
     placas_motos = set([normalizar_placa(p) for p in placas_motos_raw])
 
