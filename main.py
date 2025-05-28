@@ -153,14 +153,18 @@ from fastapi import Request
 @app.get("/sse/disponibilidad")
 async def sse_disponibilidad(request: Request):
     async def event_generator():
+        print("[SSE] Cliente conectado a /sse/disponibilidad")
         while True:
             if await request.is_disconnected():
+                print("[SSE] Cliente desconectado")
                 break
 
             data = await eventos_sse.get()
+            print("[SSE] Enviando disponibilidad:", data)  # 👈 LOG CLAVE
             yield f"data: {json.dumps(data)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 def calcular_disponibilidad():
     placas_carros_raw = coleccion_eventos.distinct("placa", {"tipo_vehiculo": "carro"})
