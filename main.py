@@ -105,13 +105,13 @@ def vehiculos_activos(telefono: str):
 # Registrar un evento y verificar si debe enviar SMS
 # -------------------------------
 @app.post("/evento")
-def registrar_evento(data: Evento):
+async def registrar_evento(data: Evento):
     data.placa = normalizar_placa(data.placa)
     coleccion_eventos.insert_one(data.dict())
 
     # Notificar disponibilidad actualizada
     disponibilidad_actual = calcular_disponibilidad()
-    asyncio.create_task(eventos_sse.put(disponibilidad_actual))
+    await eventos_sse.put(disponibilidad_actual)
     
     usuario = coleccion_usuarios.find_one({
         "vehiculos.placa": data.placa
@@ -128,6 +128,7 @@ def registrar_evento(data: Evento):
             print(f"[ERROR] No se pudo enviar SMS: {e}")
 
     return {"status": "evento registrado"}
+
 
 # -------------------------------
 # Consultar eventos por placa
