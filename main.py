@@ -46,8 +46,20 @@ def registrar_evento_manual(evento: Evento):
     evento.placa = normalizar_placa(evento.placa)
     coleccion_eventos.insert_one(evento.dict())
 
+    usuario = coleccion_usuarios.find_one({
+        "vehiculos.placa": evento.placa
+    })
+    
     mensaje = f"ADMIN registró {evento.evento.upper()} para {evento.placa} a las {evento.hora.strftime('%Y-%m-%d %H:%M:%S')}"
     print(f"[ADMIN] {mensaje}")
+
+    # Enviar SMS si el usuario existe
+    if usuario:
+        try:
+            sid = enviar_sms(usuario["telefono"], mensaje)
+            print(f"[SMS] Enviado a {usuario['telefono']} | SID: {sid}")
+        except Exception as e:
+            print(f"[ERROR] No se pudo enviar SMS: {e}")
 
     return {"status": "Evento manual registrado correctamente", "mensaje": mensaje}
 
