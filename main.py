@@ -42,21 +42,7 @@ def registrar_usuario(usuario: Usuario):
     return {"status": "usuario registrado"}
 
 @app.post("/evento/manual")
-def registrar_evento_manual(
-    evento: Evento,
-    telefono_admin: str = Body(...),
-    password_admin: str = Body(...)
-):
-    admin = coleccion_usuarios.find_one({"telefono": telefono_admin})
-    if not admin:
-        raise HTTPException(status_code=404, detail="Admin no encontrado")
-
-    if not bcrypt.checkpw(password_admin.encode("utf-8"), admin["password"].encode("utf-8")):
-        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
-
-    if admin.get("rol") != "admin":
-        raise HTTPException(status_code=403, detail="No autorizado. No es administrador.")
-
+def registrar_evento_manual(evento: Evento):
     evento.placa = normalizar_placa(evento.placa)
     coleccion_eventos.insert_one(evento.dict())
 
