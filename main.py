@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from models import Evento, Usuario, VehiculoRegistro
 from database import coleccion_eventos, coleccion_usuarios
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,12 +6,7 @@ from datetime import datetime
 from pymongo import DESCENDING
 from sms import enviar_sms
 import bcrypt
-from fastapi import Body
-import asyncio
-from fastapi.responses import StreamingResponse
-import json
-
-eventos_sse = asyncio.Queue()
+import re
 
 app = FastAPI()
 
@@ -22,8 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-import re
 
 def normalizar_placa(placa: str) -> str:
     return re.sub(r'\W+', '', placa).upper()
@@ -42,10 +35,35 @@ def registrar_usuario(usuario: Usuario):
         "nombre": usuario.nombre,
         "telefono": usuario.telefono,
         "password": hashed_password.decode("utf-8"),
-        "vehiculos": []
+        "vehiculos": [],
+        "rol": "usuario"  # Puedes cambiarlo a "admin" si corresponde
     })
 
     return {"status": "usuario registrado"}
+
+@app.post("/evento/manual")
+def registrar_evento_manual(
+    evento: Evento,
+    telefono_admin: str = Body(...),
+    password_admin: str = Body(...)
+):
+    admin = coleccion_usuarios.find_one({"telefono": telefono_admin})
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin no encontrado")
+
+    if not bcrypt.checkpw(password_admin.encode("utf-8"), admin["password"].encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+    if admin.get("rol") != "admin":
+        raise HTTPException(status_code=403, detail="No autorizado. No es administrador.")
+
+    evento.placa = normalizar_placa(evento.placa)
+    coleccion_eventos.insert_one(evento.dict())
+
+    mensaje = f"ADMIN registró {evento.evento.upper()} para {evento.placa} a las {evento.hora.strftime('%Y-%m-%d %H:%M:%S')}"
+    print(f"[ADMIN] {mensaje}")
+
+    return {"status": "Evento manual registrado correctamente", "mensaje": mensaje}
 
 @app.post("/login")
 def login(nombre: str = Body(...), password: str = Body(...)):
@@ -56,7 +74,11 @@ def login(nombre: str = Body(...), password: str = Body(...)):
     if not bcrypt.checkpw(password.encode("utf-8"), usuario["password"].encode("utf-8")):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
-    return {"nombre": usuario["nombre"], "telefono": usuario["telefono"]}
+    return {
+    "nombre": usuario["nombre"],
+    "telefono": usuario["telefono"],
+    "rol": usuario.get("rol", "usuario")
+    }
 
 # -------------------------------
 # Agregar un vehículo a un usuario ya registrado
@@ -101,18 +123,15 @@ def vehiculos_activos(telefono: str):
             })
 
     return activos
+
 # -------------------------------
 # Registrar un evento y verificar si debe enviar SMS
 # -------------------------------
 @app.post("/evento")
-async def registrar_evento(data: Evento):
+def registrar_evento(data: Evento):
     data.placa = normalizar_placa(data.placa)
     coleccion_eventos.insert_one(data.dict())
 
-    # Notificar disponibilidad actualizada
-    disponibilidad_actual = calcular_disponibilidad()
-    await eventos_sse.put(disponibilidad_actual)
-    
     usuario = coleccion_usuarios.find_one({
         "vehiculos.placa": data.placa
     })
@@ -128,7 +147,6 @@ async def registrar_evento(data: Evento):
             print(f"[ERROR] No se pudo enviar SMS: {e}")
 
     return {"status": "evento registrado"}
-
 
 # -------------------------------
 # Consultar eventos por placa
@@ -147,24 +165,6 @@ def obtener_historial(placa: str):
 @app.get("/disponibilidad")
 def disponibilidad():
     return calcular_disponibilidad()
-
-from fastapi import Request
-
-@app.get("/sse/disponibilidad")
-async def sse_disponibilidad(request: Request):
-    async def event_generator():
-        print("[SSE] Cliente conectado a /sse/disponibilidad")
-        while True:
-            if await request.is_disconnected():
-                print("[SSE] Cliente desconectado")
-                break
-
-            data = await eventos_sse.get()
-            print("[SSE] Enviando disponibilidad:", data)  # 👈 LOG CLAVE
-            yield f"data: {json.dumps(data)}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
 
 def calcular_disponibilidad():
     placas_carros_raw = coleccion_eventos.distinct("placa", {"tipo_vehiculo": "carro"})
@@ -197,6 +197,47 @@ def calcular_disponibilidad():
         "puestos_moto_disponibles": max(50 - motos_dentro, 0)
     }
 
+@app.get("/usuario/{telefono}/historial-eventos")
+def historial_eventos_usuario(telefono: str):
+    usuario = coleccion_usuarios.find_one({"telefono": telefono})
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    vehiculos = usuario.get("vehiculos", [])
+    if not vehiculos:
+        return {"historial": []}
+
+    placas_usuario = [normalizar_placa(v["placa"]) for v in vehiculos]
+
+    eventos = list(coleccion_eventos.find(
+        {"placa": {"$in": placas_usuario}}
+    ).sort("hora", DESCENDING))
+
+    for e in eventos:
+        e["_id"] = str(e["_id"])  # Para evitar problemas con ObjectId
+    return {"historial": eventos}
+
+@app.get("/usuario/{telefono}/vehiculo/{placa}/historial")
+def historial_eventos_por_placa(telefono: str, placa: str):
+    usuario = coleccion_usuarios.find_one({"telefono": telefono})
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    placa_normalizada = normalizar_placa(placa)
+    placas_usuario = [normalizar_placa(v["placa"]) for v in usuario.get("vehiculos", [])]
+
+    if placa_normalizada not in placas_usuario:
+        raise HTTPException(status_code=403, detail="La placa no está registrada para este usuario")
+
+    eventos = list(coleccion_eventos.find(
+        {"placa": placa_normalizada}
+    ).sort("hora", DESCENDING))
+
+    for e in eventos:
+        e["_id"] = str(e["_id"])
+
+    return {"placa": placa_normalizada, "eventos": eventos}
+
 
 # -------------------------------
 # Obtener pico y placa del día
@@ -214,7 +255,6 @@ def pico_y_placa():
         6: []
     }
     return {"dia": dia, "placas_restringidas": pico[dia]}
-
 
 if __name__ == "__main__":
     import os

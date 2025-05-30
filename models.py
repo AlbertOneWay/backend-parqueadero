@@ -9,7 +9,8 @@ class Vehiculo(BaseModel):
 class Usuario(BaseModel):
     nombre: str
     telefono: str
-    password: str  # campo nuevo
+    password: str
+    rol: str = "usuario"  # Valor por defecto si no se especifica
 
 class VehiculoRegistro(BaseModel):
     telefono: str  # Para identificar al usuario dueño
