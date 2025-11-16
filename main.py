@@ -254,6 +254,36 @@ def pico_y_placa():
     }
     return {"dia": dia, "placas_restringidas": pico[dia]}
 
+
+@app.get("/placa/{placa}/usuario")
+def info_placa(placa: str):
+    placa = normalizar_placa(placa)
+    usuario = coleccion_usuarios.find_one({"vehiculos.placa": placa})
+
+    if not usuario:
+        # Placa no vinculada a ningún usuario
+        return {"registrada": False}
+
+    # Buscar el vehículo concreto dentro del array
+    vehiculo = next(
+        (
+            v for v in usuario.get("vehiculos", [])
+            if normalizar_placa(v["placa"]) == placa
+        ),
+        None
+    )
+
+    return {
+        "registrada": True,
+        "usuario": {
+            "nombre": usuario["nombre"],
+            "telefono": usuario["telefono"],
+            "rol": usuario.get("rol", "usuario")
+        },
+        "vehiculo": vehiculo  # aquí vendrá { "placa": ..., "tipo_vehiculo": ... }
+    }
+
+
 if __name__ == "__main__":
     import os
     import uvicorn
