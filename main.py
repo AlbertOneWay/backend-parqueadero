@@ -191,8 +191,8 @@ def calcular_disponibilidad():
             motos_dentro += 1
 
     return {
-        "puestos_carro_disponibles": max(24 - carros_dentro, 0),
-        "puestos_moto_disponibles": max(50 - motos_dentro, 0)
+        "puestos_carro_disponibles": max(4 - carros_dentro, 0),
+        "puestos_moto_disponibles": max(5 - motos_dentro, 0)
     }
 
 @app.get("/usuario/{telefono}/historial-eventos")
